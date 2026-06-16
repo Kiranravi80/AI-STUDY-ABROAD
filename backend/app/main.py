@@ -1,11 +1,14 @@
 """FastAPI application entry point."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.database import connect_db, close_db
+from app.database import connect_db, close_db, get_database
+from scrapers.scheduler import run_all_scrapers
 from app.routers import (
     auth,
     profiles,
@@ -21,13 +24,52 @@ from app.routers import (
     chatbot,
 )
 
+logger = logging.getLogger(__name__)
+
+
+async def weekly_scraper_scheduler():
+    """Background loop that executes scrapers weekly."""
+    logger.info("Weekly scraper scheduler loop started.")
+    await asyncio.sleep(5)  # Wait briefly for startup completion
+    db = get_database()
+    while True:
+        try:
+            logger.info("Checking last scraper execution timestamp...")
+            latest_log = await db.scraper_logs.find_one({}, sort=[("created_at", -1)])
+            
+            should_run = False
+            if not latest_log:
+                should_run = True
+            else:
+                from datetime import datetime, timezone
+                try:
+                    log_time = datetime.fromisoformat(latest_log["created_at"])
+                    # Run if log is older than 7 days
+                    if (datetime.now(timezone.utc) - log_time).days >= 7:
+                        should_run = True
+                except Exception:
+                    should_run = True
+            
+            if should_run:
+                logger.info("Executing weekly scraper updates...")
+                await run_all_scrapers(db)
+            else:
+                logger.info("Database records are up-to-date. Next scheduler check in 24 hours.")
+        except Exception as e:
+            logger.error(f"Error occurred in weekly scraper scheduler: {e}")
+        
+        # Check daily
+        await asyncio.sleep(86400)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     await connect_db()
+    # Start scheduler loop as an independent background task
+    scheduler_task = asyncio.create_task(weekly_scraper_scheduler())
     yield
+    scheduler_task.cancel()
     await close_db()
 
 

@@ -31,6 +31,19 @@ class Preferences(BaseModel):
     intake: str | None = None
 
 
+class AcademicRecord(BaseModel):
+    level: str  # "10th", "12th", "bachelors", "masters", "phd", "pg_diploma", "mba", "mtech", "msc"
+    school_name: str | None = None
+    college_name: str | None = None
+    university: str | None = None
+    board: str | None = None
+    degree: str | None = None
+    specialization: str | None = None
+    year_of_passing: str | None = None
+    percentage: float | None = None
+    cgpa: float | None = None
+
+
 class ProfileUpdate(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
@@ -47,6 +60,7 @@ class ProfileUpdate(BaseModel):
     projects: list[Project] | None = None
     experience: list[Experience] | None = None
     preferences: Preferences | None = None
+    academic_history: list[AcademicRecord] | None = None
 
 
 class ProfileResponse(BaseModel):
@@ -67,4 +81,5 @@ class ProfileResponse(BaseModel):
     projects: list[dict[str, Any]] = []
     experience: list[dict[str, Any]] = []
     preferences: dict[str, Any] = {}
+    academic_history: list[AcademicRecord] = []
     completion_percentage: int = 0

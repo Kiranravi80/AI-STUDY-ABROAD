@@ -21,7 +21,9 @@ async def search_universities(
     course: str | None = None,
     tuition_min: float | None = None,
     tuition_max: float | None = None,
+    ranking_min: int | None = None,
     ranking_max: int | None = None,
+    type: str | None = None,
     intake: str | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(12, ge=1, le=100),
@@ -50,14 +52,21 @@ async def search_universities(
         query["tuition_min"] = {"$gte": tuition_min}
     if tuition_max is not None:
         query["tuition_max"] = {"$lte": tuition_max}
-    if ranking_max is not None:
-        query["ranking"] = {"$lte": ranking_max}
+    if type:
+        query["type"] = {"$regex": type, "$options": "i"}
+    if ranking_min is not None or ranking_max is not None:
+        rank_q = {}
+        if ranking_min is not None:
+            rank_q["$gte"] = ranking_min
+        if ranking_max is not None:
+            rank_q["$lte"] = ranking_max
+        query["ranking"] = rank_q
     if intake:
         query["programs.intake"] = intake
 
     skip, limit = paginate_params(page, limit)
     sort_direction = 1 if sort_order == "asc" else -1
-    sort_field = sort_by if sort_by in ["ranking", "name", "tuition_min", "tuition_max"] else "ranking"
+    sort_field = sort_by if sort_by in ["ranking", "german_ranking", "name", "tuition_min", "tuition_max"] else "ranking"
 
     total = await db.universities.count_documents(query)
     cursor = db.universities.find(query).sort(sort_field, sort_direction).skip(skip).limit(limit)

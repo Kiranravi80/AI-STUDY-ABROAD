@@ -9,10 +9,12 @@ class ProgramSchema(BaseModel):
     degree: str
     duration: str | None = None
     tuition: float | None = None
-    currency: str = "USD"
+    currency: str = "EUR"
     intake: list[str] = []
     requirements: list[str] = []
     description: str | None = None
+    language: str | None = None
+    apply_url: str | None = None
 
 
 class UniversityCreate(BaseModel):
@@ -24,13 +26,19 @@ class UniversityCreate(BaseModel):
     description: str | None = None
     tuition_min: float | None = None
     tuition_max: float | None = None
-    currency: str = "USD"
+    currency: str = "EUR"
     programs: list[ProgramSchema] = []
     scholarships: list[str] = []
     deadlines: dict[str, str] = {}
     admission_requirements: list[str] = []
     living_cost: float | None = None
     logo_url: str | None = None
+    short_name: str | None = None
+    state: str | None = None
+    german_ranking: int | None = None
+    type: str | None = None
+    intl_students_pct: float | None = None
+    founded_year: int | None = None
 
 
 class UniversityUpdate(BaseModel):
@@ -49,6 +57,12 @@ class UniversityUpdate(BaseModel):
     admission_requirements: list[str] | None = None
     living_cost: float | None = None
     logo_url: str | None = None
+    short_name: str | None = None
+    state: str | None = None
+    german_ranking: int | None = None
+    type: str | None = None
+    intl_students_pct: float | None = None
+    founded_year: int | None = None
 
 
 class UniversitySearchParams(BaseModel):
@@ -76,10 +90,16 @@ class UniversityResponse(BaseModel):
     description: str = ""
     tuition_min: float | None = None
     tuition_max: float | None = None
-    currency: str = "USD"
+    currency: str = "EUR"
     programs: list[dict[str, Any]] = []
     scholarships: list[str] = []
     deadlines: dict[str, str] = {}
     admission_requirements: list[str] = []
     living_cost: float | None = None
     logo_url: str | None = None
+    short_name: str | None = None
+    state: str | None = None
+    german_ranking: int | None = None
+    type: str | None = None
+    intl_students_pct: float | None = None
+    founded_year: int | None = None
