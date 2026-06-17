@@ -119,3 +119,32 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/api/admin/database-stats")
+async def get_database_stats():
+    db = get_database()
+    
+    total_unis = await db.universities.count_documents({})
+    public_unis = await db.universities.count_documents({"type": "Public"})
+    private_unis = await db.universities.count_documents({"type": "Private"})
+    
+    total_progs = await db.programs.count_documents({})
+    bachelor_progs = await db.programs.count_documents({"degree": {"$regex": "^Bachelor", "$options": "i"}})
+    master_progs = await db.programs.count_documents({"degree": {"$regex": "^Master", "$options": "i"}})
+    
+    latest_log = await db.scraper_logs.find_one({"country": "Germany", "status": "success"}, sort=[("created_at", -1)])
+    last_scrape_date = latest_log["created_at"] if latest_log else None
+    last_import_date = last_scrape_date
+    
+    return {
+        "total_universities": total_unis,
+        "public_universities": public_unis,
+        "private_universities": private_unis,
+        "total_programs": total_progs,
+        "bachelor_programs": bachelor_progs,
+        "master_programs": master_progs,
+        "last_import_date": last_import_date,
+        "last_scrape_date": last_scrape_date
+    }
+

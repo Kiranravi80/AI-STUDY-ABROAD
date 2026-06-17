@@ -9,12 +9,14 @@ class ProgramSchema(BaseModel):
     degree: str
     duration: str | None = None
     tuition: float | None = None
+    semester_contribution: float | None = None
     currency: str = "EUR"
     intake: list[str] = []
     requirements: list[str] = []
     description: str | None = None
     language: str | None = None
     apply_url: str | None = None
+    deadline: str | None = None
 
 
 class UniversityCreate(BaseModel):
