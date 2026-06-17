@@ -4,18 +4,63 @@ from pydantic import BaseModel, Field
 from typing import Any
 
 
+class CampusSchema(BaseModel):
+    name: str
+    city: str
+    tuition_fee: float
+    apply_url: str | None = None
+    last_updated: str | None = None
+
+
+class EctsRequirementSchema(BaseModel):
+    subject: str
+    ects: int
+
+
+class AcademicRequirementsSchema(BaseModel):
+    eligible_degrees: list[str] = []
+    ects_requirements: list[EctsRequirementSchema] = []
+    required_subjects: list[str] = []
+
+
+class LanguageRequirementsSchema(BaseModel):
+    ielts: float | None = None
+    toefl: int | None = None
+    pte: int | None = None
+    german: str | None = None
+    minimum_score_text: str | None = None
+
+
+class IndianStudentRequirementsSchema(BaseModel):
+    aps_required: bool | None = None
+    uni_assist: bool | None = None
+    vpd_required: bool | None = None
+
+
+class ProgramRequirementsSchema(BaseModel):
+    academic: AcademicRequirementsSchema | None = None
+    language: LanguageRequirementsSchema | None = None
+    documents_required: list[str] = []
+    indian_students: IndianStudentRequirementsSchema | None = None
+    requirement_source_url: str | None = None
+    deadline_source_url: str | None = None
+    program_source_url: str | None = None
+    last_updated: str | None = None
+
+
 class ProgramSchema(BaseModel):
     name: str
     degree: str
     duration: str | None = None
-    tuition: float | None = None
+    campuses: list[CampusSchema] = []
     semester_contribution: float | None = None
     currency: str = "EUR"
     intake: list[str] = []
     requirements: list[str] = []
+    requirements_details: ProgramRequirementsSchema | None = None
     description: str | None = None
     language: str | None = None
-    apply_url: str | None = None
+    deadlines: dict[str, str] = {}
     deadline: str | None = None
 
 

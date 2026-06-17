@@ -14,12 +14,11 @@ RoadmapStatus = Literal["pending", "in_progress", "completed"]
 
 class ShortlistCreate(BaseModel):
     university_id: str
-    category: ShortlistCategory = "target"
+    program_name: str
     notes: str | None = None
 
 
 class ShortlistUpdate(BaseModel):
-    category: ShortlistCategory | None = None
     notes: str | None = None
 
 

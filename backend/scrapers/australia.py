@@ -27,8 +27,38 @@ class AustraliaScraper(BaseScraper):
                 "currency": "AUD",
                 "living_cost": 20000,
                 "programs": [
-                    {"name": "Information Technology", "degree": "Master", "duration": "2 years", "tuition": 45000, "intake": ["February", "July"], "requirements": ["IELTS 6.5", "GPA 3.0+"]},
-                    {"name": "Data Science", "degree": "Master", "duration": "2 years", "tuition": 46000, "intake": ["February", "July"], "requirements": ["IELTS 6.5", "GPA 3.0+"]}
+                    {
+                        "name": "Information Technology",
+                        "degree": "Master",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Melbourne Campus",
+                                "city": "Melbourne",
+                                "tuition_fee": 45000.0,
+                                "apply_url": "https://unimelb.edu.au/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["February", "July"],
+                        "requirements": ["IELTS 6.5", "GPA 3.0+"]
+                    },
+                    {
+                        "name": "Data Science",
+                        "degree": "Master",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Melbourne Campus",
+                                "city": "Melbourne",
+                                "tuition_fee": 46000.0,
+                                "apply_url": "https://unimelb.edu.au/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["February", "July"],
+                        "requirements": ["IELTS 6.5", "GPA 3.0+"]
+                    }
                 ],
                 "scholarships": ["Melbourne International Scholarship", "Graduate Research Scholarships"],
                 "deadlines": {"February": "October 31", "July": "April 30"},
@@ -46,8 +76,38 @@ class AustraliaScraper(BaseScraper):
                 "currency": "AUD",
                 "living_cost": 21000,
                 "programs": [
-                    {"name": "Commerce", "degree": "Master", "duration": "2 years", "tuition": 49000, "intake": ["February", "August"], "requirements": ["IELTS 7.0", "GPA 3.0+"]},
-                    {"name": "Cyber Security", "degree": "Master", "duration": "1.5 years", "tuition": 47000, "intake": ["February", "August"], "requirements": ["IELTS 6.5", "GPA 3.0+"]}
+                    {
+                        "name": "Commerce",
+                        "degree": "Master",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Sydney Campus",
+                                "city": "Sydney",
+                                "tuition_fee": 49000.0,
+                                "apply_url": "https://sydney.edu.au/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["February", "August"],
+                        "requirements": ["IELTS 7.0", "GPA 3.0+"]
+                    },
+                    {
+                        "name": "Cyber Security",
+                        "degree": "Master",
+                        "duration": "1.5 years",
+                        "campuses": [
+                            {
+                                "name": "Sydney Campus",
+                                "city": "Sydney",
+                                "tuition_fee": 47000.0,
+                                "apply_url": "https://sydney.edu.au/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["February", "August"],
+                        "requirements": ["IELTS 6.5", "GPA 3.0+"]
+                    }
                 ],
                 "scholarships": ["Sydney Scholars India Scholarship", "Vice-Chancellor's International Scholarships"],
                 "deadlines": {"February": "November 30", "August": "May 31"},
@@ -63,6 +123,14 @@ class AustraliaScraper(BaseScraper):
                 pass
 
             for uni in scraped_data:
+                for p in uni.get("programs", []):
+                    p["intake"] = [i + " Intake" if not i.endswith("Intake") else i for i in p.get("intake", [])]
+                    p["deadlines"] = {}
+                    for intake in p["intake"]:
+                        clean_intake_key = intake.replace(" Intake", "")
+                        p["deadlines"][intake] = uni.get("deadlines", {}).get(clean_intake_key) or "Rolling Admission"
+                    p["requirements_details"] = None
+
                 existing = await db.universities.find_one({"name": uni["name"]})
                 if existing:
                     updates = {}

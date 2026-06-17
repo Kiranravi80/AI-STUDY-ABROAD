@@ -27,9 +27,54 @@ class CanadaScraper(BaseScraper):
                 "currency": "CAD",
                 "living_cost": 15000,
                 "programs": [
-                    {"name": "Business Administration", "degree": "MBA", "duration": "2 years", "tuition": 40000, "intake": ["Fall"], "requirements": ["GMAT", "IELTS 7.0", "GPA 3.3+"]},
-                    {"name": "Mechanical Engineering", "degree": "MEng", "duration": "1.5 years", "tuition": 38000, "intake": ["Fall", "Winter"], "requirements": ["IELTS 7.0", "GPA 3.0+"]},
-                    {"name": "Computer Science", "degree": "MSc", "duration": "2 years", "tuition": 32000, "intake": ["Fall"], "requirements": ["IELTS 7.0", "GPA 3.5+"]}
+                    {
+                        "name": "Business Administration",
+                        "degree": "MBA",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Toronto Campus",
+                                "city": "Toronto",
+                                "tuition_fee": 40000.0,
+                                "apply_url": "https://utoronto.ca/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall"],
+                        "requirements": ["GMAT", "IELTS 7.0", "GPA 3.3+"]
+                    },
+                    {
+                        "name": "Mechanical Engineering",
+                        "degree": "MEng",
+                        "duration": "1.5 years",
+                        "campuses": [
+                            {
+                                "name": "Toronto Campus",
+                                "city": "Toronto",
+                                "tuition_fee": 38000.0,
+                                "apply_url": "https://utoronto.ca/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall", "Winter"],
+                        "requirements": ["IELTS 7.0", "GPA 3.0+"]
+                    },
+                    {
+                        "name": "Computer Science",
+                        "degree": "MSc",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Toronto Campus",
+                                "city": "Toronto",
+                                "tuition_fee": 32000.0,
+                                "apply_url": "https://utoronto.ca/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall"],
+                        "requirements": ["IELTS 7.0", "GPA 3.5+"]
+                    }
                 ],
                 "scholarships": ["International Student Scholarship", "Graduate Assistantship"],
                 "deadlines": {"Fall": "January 15", "Winter": "August 1"},
@@ -47,8 +92,38 @@ class CanadaScraper(BaseScraper):
                 "currency": "CAD",
                 "living_cost": 16000,
                 "programs": [
-                    {"name": "Data Science", "degree": "MDS", "duration": "10 months", "tuition": 45000, "intake": ["Fall"], "requirements": ["IELTS 7.0", "GPA 3.2+"]},
-                    {"name": "Civil Engineering", "degree": "MASc", "duration": "2 years", "tuition": 28000, "intake": ["Fall", "Winter"], "requirements": ["IELTS 6.5", "GPA 3.0+"]}
+                    {
+                        "name": "Data Science",
+                        "degree": "MDS",
+                        "duration": "10 months",
+                        "campuses": [
+                            {
+                                "name": "Vancouver Campus",
+                                "city": "Vancouver",
+                                "tuition_fee": 45000.0,
+                                "apply_url": "https://ubc.ca/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall"],
+                        "requirements": ["IELTS 7.0", "GPA 3.2+"]
+                    },
+                    {
+                        "name": "Civil Engineering",
+                        "degree": "MASc",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Vancouver Campus",
+                                "city": "Vancouver",
+                                "tuition_fee": 28000.0,
+                                "apply_url": "https://ubc.ca/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall", "Winter"],
+                        "requirements": ["IELTS 6.5", "GPA 3.0+"]
+                    }
                 ],
                 "scholarships": ["UBC Graduate Fellowship", "Karen McKellin International Leader Medal"],
                 "deadlines": {"Fall": "January 30", "Winter": "June 1"},
@@ -64,6 +139,14 @@ class CanadaScraper(BaseScraper):
                 pass
 
             for uni in scraped_data:
+                for p in uni.get("programs", []):
+                    p["intake"] = [i + " Intake" if not i.endswith("Intake") else i for i in p.get("intake", [])]
+                    p["deadlines"] = {}
+                    for intake in p["intake"]:
+                        clean_intake_key = intake.replace(" Intake", "")
+                        p["deadlines"][intake] = uni.get("deadlines", {}).get(clean_intake_key) or "Rolling Admission"
+                    p["requirements_details"] = None
+
                 existing = await db.universities.find_one({"name": uni["name"]})
                 if existing:
                     updates = {}

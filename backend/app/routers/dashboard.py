@@ -62,14 +62,24 @@ async def student_dashboard(user: dict = Depends(require_student)):
     upcoming_deadlines = []
     for item in shortlists:
         uni = await db.universities.find_one({"_id": ObjectId(item["university_id"])})
-        if uni and uni.get("deadlines"):
-            for intake, date in uni["deadlines"].items():
+        if uni:
+            program = None
+            for p in uni.get("programs", []):
+                if p.get("name", "").lower() == item.get("program_name", "").lower():
+                    program = p
+                    break
+            
+            deadlines_dict = program.get("deadlines") if program else None
+            if not deadlines_dict:
+                deadlines_dict = uni.get("deadlines") or {}
+                
+            for intake, date in deadlines_dict.items():
                 upcoming_deadlines.append({
-                    "university_name": uni["name"],
+                    "university_name": f"{program['name'] if program else item.get('program_name')} ({uni['name']})",
                     "country": uni["country"],
                     "intake": intake,
                     "deadline": date,
-                    "category": item.get("category", "target")
+                    "category": "target"
                 })
 
     # Check subscription

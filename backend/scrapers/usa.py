@@ -27,8 +27,38 @@ class USAScraper(BaseScraper):
                 "currency": "USD",
                 "living_cost": 18000,
                 "programs": [
-                    {"name": "Computer Science", "degree": "MS", "duration": "2 years", "tuition": 58000, "intake": ["Fall", "Spring"], "requirements": ["GRE", "TOEFL 100+", "GPA 3.5+"]},
-                    {"name": "Data Science", "degree": "MS", "duration": "2 years", "tuition": 56000, "intake": ["Fall"], "requirements": ["GRE", "TOEFL 100+", "GPA 3.5+"]}
+                    {
+                        "name": "Computer Science",
+                        "degree": "MS",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Cambridge Campus",
+                                "city": "Cambridge",
+                                "tuition_fee": 58000.0,
+                                "apply_url": "https://mit.edu/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall", "Spring"],
+                        "requirements": ["GRE", "TOEFL 100+", "GPA 3.5+"]
+                    },
+                    {
+                        "name": "Data Science",
+                        "degree": "MS",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Cambridge Campus",
+                                "city": "Cambridge",
+                                "tuition_fee": 56000.0,
+                                "apply_url": "https://mit.edu/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall"],
+                        "requirements": ["GRE", "TOEFL 100+", "GPA 3.5+"]
+                    }
                 ],
                 "scholarships": ["Merit Scholarship", "Research Assistantship"],
                 "deadlines": {"Fall": "December 15", "Spring": "October 1"},
@@ -46,8 +76,38 @@ class USAScraper(BaseScraper):
                 "currency": "USD",
                 "living_cost": 20000,
                 "programs": [
-                    {"name": "Computer Science", "degree": "MS", "duration": "2 years", "tuition": 59000, "intake": ["Fall"], "requirements": ["GRE", "TOEFL 100+", "GPA 3.6+"]},
-                    {"name": "Electrical Engineering", "degree": "MS", "duration": "2 years", "tuition": 58000, "intake": ["Fall", "Winter"], "requirements": ["GRE", "TOEFL 100+", "GPA 3.4+"]}
+                    {
+                        "name": "Computer Science",
+                        "degree": "MS",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Silicon Valley Campus",
+                                "city": "Stanford",
+                                "tuition_fee": 59000.0,
+                                "apply_url": "https://stanford.edu/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall"],
+                        "requirements": ["GRE", "TOEFL 100+", "GPA 3.6+"]
+                    },
+                    {
+                        "name": "Electrical Engineering",
+                        "degree": "MS",
+                        "duration": "2 years",
+                        "campuses": [
+                            {
+                                "name": "Silicon Valley Campus",
+                                "city": "Stanford",
+                                "tuition_fee": 58000.0,
+                                "apply_url": "https://stanford.edu/apply",
+                                "last_updated": utc_now().isoformat()
+                            }
+                        ],
+                        "intake": ["Fall", "Winter"],
+                        "requirements": ["GRE", "TOEFL 100+", "GPA 3.4+"]
+                    }
                 ],
                 "scholarships": ["Knight-Hennessy Scholars", "Stanford Graduate Fellowship"],
                 "deadlines": {"Fall": "December 1"},
@@ -63,6 +123,14 @@ class USAScraper(BaseScraper):
                 pass
 
             for uni in scraped_data:
+                for p in uni.get("programs", []):
+                    p["intake"] = [i + " Intake" if not i.endswith("Intake") else i for i in p.get("intake", [])]
+                    p["deadlines"] = {}
+                    for intake in p["intake"]:
+                        clean_intake_key = intake.replace(" Intake", "")
+                        p["deadlines"][intake] = uni.get("deadlines", {}).get(clean_intake_key) or "Rolling Admission"
+                    p["requirements_details"] = None
+
                 existing = await db.universities.find_one({"name": uni["name"]})
                 if existing:
                     updates = {}
