@@ -91,6 +91,11 @@ async def generate_analysis_report(
     - Standardized Test Scores: {json.dumps(profile.get('test_scores', []))}
     - Experience: {json.dumps(profile.get('experience', []))}
     - Projects: {json.dumps(profile.get('projects', []))}
+    - Skills: {json.dumps(profile.get('skills', {}))}
+    - Publications: {json.dumps(profile.get('publications', []))}
+    - Certifications: {json.dumps(profile.get('certifications', []))}
+    - Social Media: {json.dumps(profile.get('social_media', {}))}
+    - Preferences: {json.dumps(profile.get('preferences', {}))}
 
     Student's Uploaded Documents:
     {json.dumps(uploaded_doc_names)}
@@ -157,30 +162,39 @@ async def generate_analysis_report(
         eval_data = json.loads(cleaned)
     except Exception as e:
         logger.error(f"Failed to generate AI analysis: {e}")
-        # Standard Fallback logic if AI fails
+        # Programmatic calculation fallback using real database rules
+        from app.utils.scoring_engine import calculate_eligibility_and_score
+        scoring = calculate_eligibility_and_score(profile, program, university)
+        
+        # Map documents status using actual uploaded document names
+        doc_checks = []
+        for doc in scoring["document_check"]:
+            doc_name = doc["document_name"]
+            status = "Missing"
+            for udoc in uploaded_doc_names:
+                udoc_clean = udoc.lower().replace(" ", "").replace("_", "").replace("-", "")
+                doc_clean = doc_name.lower().replace(" ", "").replace("_", "").replace("-", "")
+                if doc_clean in udoc_clean or udoc_clean in doc_clean:
+                    status = "Uploaded"
+                    break
+            doc_checks.append({
+                "document_name": doc_name,
+                "status": status
+            })
+
         eval_data = {
-            "overall_chance": "Moderate",
-            "admission_chance": 75,
-            "strengths": ["Field of study aligns with program domain", "Basic profile requirements satisfied"],
-            "weaknesses": ["Academic ECTS credits need formal verification", "Check APS certificate status"],
-            "requirement_gap_analysis": [
-                {
-                    "requirement": "Math/CS ECTS credits",
-                    "profile": f"Degrees: {profile.get('field_of_study')}",
-                    "gap": "Verification required"
-                }
-            ],
-            "document_check": [
-                {"document_name": "APS Certificate", "status": "Uploaded" if any("aps" in d.lower() for d in uploaded_doc_names) else "Missing"},
-                {"document_name": "IELTS Certificate", "status": "Uploaded" if any("ielts" in d.lower() or "english" in d.lower() for d in uploaded_doc_names) else "Missing"},
-                {"document_name": "CV", "status": "Uploaded" if any("cv" in d.lower() or "resume" in d.lower() for d in uploaded_doc_names) else "Missing"}
-            ],
-            "ai_reasoning": "Your profile meets the general entry criteria. Standard visa and academic document reviews are recommended.",
+            "overall_chance": scoring["category"],
+            "admission_chance": scoring["match_score"],
+            "strengths": scoring["strengths"],
+            "weaknesses": scoring["weaknesses"],
+            "requirement_gap_analysis": scoring["requirement_gap"],
+            "document_check": doc_checks,
+            "ai_reasoning": f"Your programmatic admission eligibility score is calculated at {scoring['match_score']}%. " + " ".join(scoring["reasons"]),
             "ai_roadmap": [
-                "Step 1: Gather and upload certified transcripts",
-                "Step 2: Verify APS status",
-                "Step 3: Prepare Statement of Purpose",
-                "Step 4: Request Letter of Recommendation"
+                "Step 1: Gather and upload certified documents for outstanding items.",
+                "Step 2: Submit APS certificate verification request for Germany (mandatory for India/China/Vietnam).",
+                "Step 3: Draft program-specific Statement of Purpose (SOP).",
+                "Step 4: Request Academic Reference / Recommendation Letters from university professors."
             ]
         }
 

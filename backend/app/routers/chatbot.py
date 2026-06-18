@@ -47,8 +47,13 @@ async def send_chat_message(
         {"role": msg.get("role"), "content": msg.get("content")}
         for msg in raw_history
     ]
-
+    
     # Generate reply
+    print("USER")
+    print(user)
+
+    print("PROFILE")
+    print(profile)
     reply = await generate_chatbot_response(data.message, history, profile)
 
     # Save both messages to the database

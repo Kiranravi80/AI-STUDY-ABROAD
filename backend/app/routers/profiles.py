@@ -1,20 +1,88 @@
-"""Profile management routes for students."""
+"""Profile management routes for students with resume extraction and photo uploads."""
 
-from fastapi import APIRouter, Depends, HTTPException
+import io
+import json
+import logging
+import base64
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from bson import ObjectId
 
 from app.database import get_database
 from app.schemas.profile import ProfileUpdate, ProfileResponse
 from app.middleware.auth import require_student
 from app.utils.helpers import serialize_doc, utc_now
+from app.ai.gemini_service import generate_ai
+from app.ai.profile_engine import clean_json_text
 
-router = APIRouter(prefix="/profiles", tags=["Profiles"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["Profiles"])
+
+
+def extract_text_from_file(file_bytes: bytes, file_name: str) -> str:
+    """Extract raw text from PDF, DOCX, DOC, or TXT file on-demand."""
+    ext = file_name.split(".")[-1].lower() if file_name else ""
+    
+    if ext == "txt":
+        return file_bytes.decode("utf-8", errors="ignore")
+        
+    elif ext == "pdf":
+        try:
+            import pypdf
+        except ImportError:
+            logger.info("pypdf missing. Performing self-healing installation...")
+            import subprocess
+            import sys
+            subprocess.run([sys.executable, "-m", "pip", "install", "pypdf"])
+            import pypdf
+            
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+            return text
+        except Exception as e:
+            logger.error(f"Error parsing PDF file: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to parse PDF resume: {e}")
+            
+    elif ext in ["docx", "doc"]:
+        try:
+            import docx
+        except ImportError:
+            logger.info("python-docx missing. Performing self-healing installation...")
+            import subprocess
+            import sys
+            subprocess.run([sys.executable, "-m", "pip", "install", "python-docx"])
+            import docx
+            
+        try:
+            doc = docx.Document(io.BytesIO(file_bytes))
+            return "\n".join([p.text for p in doc.paragraphs])
+        except Exception as e:
+            logger.error(f"Error parsing DOCX file: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to parse DOCX resume: {e}")
+            
+    raise HTTPException(status_code=400, detail="Unsupported resume format. Only PDF, DOCX, DOC, or TXT allowed.")
 
 
 async def calculate_completion(profile: dict, db) -> int:
-    """Calculate profile completion percentage based on five milestones (20% each)."""
+    """Calculate profile completion percentage dynamically according to the upgrade rules."""
     academic_history = profile.get("academic_history", [])
     
+    # 1. Personal Information (20%)
+    has_personal = bool(
+        profile.get("first_name") and
+        profile.get("last_name") and
+        profile.get("date_of_birth") and
+        profile.get("gender") and
+        profile.get("nationality") and
+        profile.get("current_country") and
+        profile.get("phone") and
+        profile.get("email")
+    )
+    
+    # 2. Academic History (30%)
     has_10 = any(
         e.get("level") == "10th" and 
         e.get("school_name") and 
@@ -23,7 +91,6 @@ async def calculate_completion(profile: dict, db) -> int:
         e.get("percentage") is not None
         for e in academic_history
     )
-    
     has_12 = any(
         e.get("level") == "12th" and 
         e.get("college_name") and 
@@ -32,7 +99,6 @@ async def calculate_completion(profile: dict, db) -> int:
         e.get("percentage") is not None
         for e in academic_history
     )
-    
     has_bachelors = any(
         e.get("level") == "bachelors" and 
         e.get("degree") and 
@@ -41,29 +107,62 @@ async def calculate_completion(profile: dict, db) -> int:
         (e.get("cgpa") is not None or e.get("percentage") is not None)
         for e in academic_history
     )
+    has_academic = has_10 and has_12 and has_bachelors
     
+    # 3. Profile Photo (10%)
+    has_photo = bool(profile.get("profile_photo"))
+    
+    # 4. Preferences (10%)
     prefs = profile.get("preferences", {})
     has_preferences = bool(
-        profile.get("nationality") and
         prefs.get("preferred_countries") and 
         prefs.get("preferred_degrees") and 
         prefs.get("intake")
     )
+    has_preferred_countries = bool(prefs.get("preferred_countries"))
     
-    docs_count = await db.documents.count_documents({"user_id": profile["user_id"]})
-    has_documents = docs_count > 0
+    # 5. Experience (10%)
+    has_experience = bool(profile.get("experience"))
     
+    # 6. Projects (10%)
+    has_projects = bool(profile.get("projects"))
+    
+    # 7. Skills (5%)
+    skills = profile.get("skills", {})
+    has_skills = any(skills.get(k) for k in [
+        "technical_skills", "programming_languages", "frameworks", "tools",
+        "databases", "cloud_platforms", "aiml_tools", "soft_skills"
+    ] if skills.get(k))
+    
+    # 8. Social Links (5%)
+    social = profile.get("social_media", {})
+    has_socials = any(social.get(k) for k in [
+        "linkedin_url", "github_url", "portfolio_website", "kaggle_profile",
+        "google_scholar", "researchgate", "twitter_x", "other_website"
+    ] if social.get(k))
+    
+    # Calculate raw sum
     score = 0
-    if has_10: score += 20
-    if has_12: score += 20
-    if has_bachelors: score += 20
-    if has_preferences: score += 20
-    if has_documents: score += 20
+    if has_personal: score += 20
+    if has_academic: score += 30
+    if has_photo: score += 10
+    if has_preferences: score += 10
+    if has_experience: score += 10
+    if has_projects: score += 10
+    if has_skills: score += 5
+    if has_socials: score += 5
     
-    return score
+    # Mandatory Rule: Profile Photo, Personal Info, Academic History, Preferred Countries
+    is_mandatory_complete = has_photo and has_personal and has_academic and has_preferred_countries
+    
+    if is_mandatory_complete:
+        return 100
+        
+    return min(score, 100)
 
 
-@router.get("/me", response_model=ProfileResponse)
+@router.get("/profile", response_model=ProfileResponse)
+@router.get("/profiles/me", response_model=ProfileResponse)
 async def get_my_profile(user: dict = Depends(require_student)):
     db = get_database()
     profile = await db.profiles.find_one({"user_id": user["id"]})
@@ -83,7 +182,8 @@ async def get_my_profile(user: dict = Depends(require_student)):
     return ProfileResponse(**serialized)
 
 
-@router.put("/me", response_model=ProfileResponse)
+@router.put("/profile", response_model=ProfileResponse)
+@router.put("/profiles/me", response_model=ProfileResponse)
 async def update_my_profile(data: ProfileUpdate, user: dict = Depends(require_student)):
     db = get_database()
     update_data = {k: v for k, v in data.model_dump(exclude_none=True).items()}
@@ -163,7 +263,208 @@ async def update_my_profile(data: ProfileUpdate, user: dict = Depends(require_st
     return ProfileResponse(**serialized)
 
 
-@router.get("/student/{student_id}", response_model=ProfileResponse)
+@router.post("/profile/photo")
+async def upload_profile_photo(file: UploadFile = File(...), user: dict = Depends(require_student)):
+    """Upload a profile photo. Converts to base64 data and saves inside profile."""
+    ext = file.filename.split(".")[-1].lower() if file.filename else ""
+    if ext not in ["jpg", "jpeg", "png", "webp"]:
+        raise HTTPException(status_code=400, detail="Unsupported photo format. Allowed: JPG, PNG, WEBP")
+        
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Photo too large. Max 5MB")
+        
+    base64_str = f"data:image/{ext};base64," + base64.b64encode(content).decode("utf-8")
+    
+    db = get_database()
+    await db.profiles.update_one(
+        {"user_id": user["id"]},
+        {"$set": {"profile_photo": base64_str}}
+    )
+    
+    profile = await db.profiles.find_one({"user_id": user["id"]})
+    completion = await calculate_completion(profile, db)
+    await db.profiles.update_one(
+        {"user_id": user["id"]},
+        {"$set": {"completion_percentage": completion}}
+    )
+    
+    return {"profile_photo": base64_str, "completion_percentage": completion}
+
+
+@router.delete("/profile/photo")
+async def delete_profile_photo(user: dict = Depends(require_student)):
+    """Remove the student's profile photo."""
+    db = get_database()
+    await db.profiles.update_one(
+        {"user_id": user["id"]},
+        {"$set": {"profile_photo": ""}}
+    )
+    
+    profile = await db.profiles.find_one({"user_id": user["id"]})
+    completion = await calculate_completion(profile, db)
+    await db.profiles.update_one(
+        {"user_id": user["id"]},
+        {"$set": {"completion_percentage": completion}}
+    )
+    
+    return {"message": "Profile photo removed", "completion_percentage": completion}
+
+
+@router.post("/profile/resume/extract")
+async def extract_resume_details(file: UploadFile = File(...), user: dict = Depends(require_student)):
+    """Extract text from uploaded resume and send to Gemini to parse into profile fields."""
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+         raise HTTPException(status_code=400, detail="Resume too large. Max 5MB")
+         
+    # Extract text from the PDF/DOCX
+    resume_text = extract_text_from_file(content, file.filename)
+    
+    if not resume_text or len(resume_text.strip()) < 50:
+         raise HTTPException(status_code=400, detail="Failed to extract readable text from the resume file.")
+
+    system_instruction = (
+        "You are an expert AI Resume Parsing Service. Your task is to analyze the extracted resume text "
+        "and return a highly structured JSON mapping matching the student's profile schema exactly. "
+        "Do not include any other conversational text or markdown wrappers besides the JSON."
+    )
+    
+    prompt = f"""
+    Parse the following resume text and map it to the profile structure.
+    
+    Resume Text:
+    {resume_text}
+    
+    Return a JSON object with this exact structure (if some parts are missing, leave empty lists or nulls):
+    {{
+        "personal_info": {{
+            "first_name": "<string or null>",
+            "last_name": "<string or null>",
+            "date_of_birth": "<YYYY-MM-DD or null>",
+            "gender": "<string or null>",
+            "nationality": "<string or null>",
+            "current_country": "<string or null>",
+            "phone": "<string or null>",
+            "email": "<string or null>",
+            "address": "<string or null>"
+        }},
+        "academic_history": [
+            {{
+                "level": "10th",
+                "school_name": "<string or null>",
+                "board": "<string or null>",
+                "year_of_passing": "<string or null>",
+                "percentage": <float or null>
+            }},
+            {{
+                "level": "12th",
+                "college_name": "<string or null>",
+                "board": "<string or null>",
+                "year_of_passing": "<string or null>",
+                "percentage": <float or null>
+            }},
+            {{
+                "level": "bachelors",
+                "degree": "<string, e.g. BTech or null>",
+                "specialization": "<string or null>",
+                "university": "<string or null>",
+                "year_of_passing": "<string or null>",
+                "cgpa": <float or null>,
+                "percentage": <float or null>
+            }},
+            {{
+                "level": "masters",
+                "degree": "<string, e.g. MSc or null>",
+                "specialization": "<string or null>",
+                "university": "<string or null>",
+                "year_of_passing": "<string or null>",
+                "cgpa": <float or null>,
+                "percentage": <float or null>
+            }},
+            {{
+                "level": "phd",
+                "degree": "PhD",
+                "research_area": "<string or null>",
+                "university": "<string or null>",
+                "year_of_passing": "<string or null>"
+            }}
+        ],
+        "experience": [
+            {{
+                "company": "<string>",
+                "role": "<string>",
+                "location": "<string or null>",
+                "start_date": "<string, e.g. YYYY-MM or null>",
+                "end_date": "<string or null>",
+                "current_company": <bool>,
+                "description": "<string or null>"
+            }}
+        ],
+        "projects": [
+            {{
+                "title": "<string>",
+                "description": "<string or null>",
+                "technologies": [<list of strings>],
+                "github_link": "<string or null>",
+                "project_url": "<string or null>",
+                "start_date": "<string or null>",
+                "end_date": "<string or null>"
+            }}
+        ],
+        "skills": {{
+            "technical_skills": [<list of strings>],
+            "programming_languages": [<list of strings>],
+            "frameworks": [<list of strings>],
+            "tools": [<list of strings>],
+            "databases": [<list of strings>],
+            "cloud_platforms": [<list of strings>],
+            "aiml_tools": [<list of strings>],
+            "soft_skills": [<list of strings>]
+        }},
+        "publications": [
+            {{
+                "title": "<string>",
+                "journal_conference": "<string or null>",
+                "date": "<string or null>",
+                "doi": "<string or null>",
+                "url": "<string or null>",
+                "authors": [<list of strings>]
+            }}
+        ],
+        "certifications": [
+            {{
+                "name": "<string>",
+                "provider": "<string or null>",
+                "issue_date": "<string or null>",
+                "credential_url": "<string or null>",
+                "credential_id": "<string or null>"
+            }}
+        ],
+        "social_media": {{
+            "linkedin_url": "<string or null>",
+            "github_url": "<string or null>",
+            "portfolio_website": "<string or null>",
+            "kaggle_profile": "<string or null>",
+            "google_scholar": "<string or null>",
+            "researchgate": "<string or null>",
+            "twitter_x": "<string or null>",
+            "other_website": "<string or null>"
+        }}
+    }}
+    """
+
+    try:
+        raw_response = await generate_ai(prompt, system_instruction, json_mode=True)
+        cleaned = clean_json_text(raw_response)
+        parsed_data = json.loads(cleaned)
+        return parsed_data
+    except Exception as e:
+        logger.error(f"Failed to extract resume details: {e}")
+        raise HTTPException(status_code=500, detail=f"Gemini resume extraction failed: {e}")
+
+
+@router.get("/profiles/student/{student_id}", response_model=ProfileResponse)
 async def get_student_profile(student_id: str, user: dict = Depends(require_student)):
     """Employees/admins use a different route - this is for student self-view."""
     raise HTTPException(status_code=404, detail="Use employee/admin endpoints")

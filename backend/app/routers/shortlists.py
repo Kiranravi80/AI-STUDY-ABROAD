@@ -13,6 +13,7 @@ from app.middleware.auth import require_student
 from app.utils.helpers import serialize_doc, serialize_docs, utc_now
 from app.ai.gemini_service import generate_ai
 from app.ai.profile_engine import clean_json_text
+from app.utils.scoring_engine import calculate_eligibility_and_score
 
 logger = logging.getLogger(__name__)
 
@@ -68,46 +69,6 @@ def format_location(program: dict, university: dict) -> str:
     return country or "N/A"
 
 
-def calculate_match_score(profile: dict, program: dict) -> int:
-    score = 75  # base score
-    gpa_str = profile.get("gpa")
-    req_details = program.get("requirements_details") or {}
-    
-    # Check GPA
-    if gpa_str:
-        try:
-            if "%" in gpa_str:
-                gpa_val = float(gpa_str.replace("%", ""))
-                if gpa_val > 80: score += 10
-                elif gpa_val > 70: score += 5
-            else:
-                gpa_val = float(gpa_str)
-                if gpa_val >= 3.5: score += 12
-                elif gpa_val >= 3.0: score += 6
-        except ValueError:
-            pass
-            
-    # Check IELTS/language requirements
-    test_scores = profile.get("test_scores", [])
-    ielts_score = None
-    for t in test_scores:
-        if t.get("test_name", "").lower() == "ielts":
-            try:
-                ielts_score = float(t.get("score", "0"))
-            except ValueError:
-                pass
-                
-    req_lang = req_details.get("language") or {}
-    req_ielts = req_lang.get("ielts")
-    if req_ielts and ielts_score:
-        if ielts_score >= req_ielts:
-            score += 8
-        else:
-            score -= 10
-            
-    return min(max(score, 45), 98)
-
-
 @router.get("")
 async def get_shortlists(user: dict = Depends(require_student)):
     db = get_database()
@@ -127,7 +88,6 @@ async def get_shortlists(user: dict = Depends(require_student)):
                 break
                 
         if not program:
-            # Fallback mock program if scraper deleted it
             program = {
                 "name": item["program_name"],
                 "degree": "Master's",
@@ -135,6 +95,9 @@ async def get_shortlists(user: dict = Depends(require_student)):
                 "campuses": []
             }
             
+        # Run real scoring engine
+        res = calculate_eligibility_and_score(profile, program, uni)
+
         serialized = {
             "id": str(item["_id"]),
             "university_id": item["university_id"],
@@ -147,7 +110,7 @@ async def get_shortlists(user: dict = Depends(require_student)):
             "deadline": format_deadline(program),
             "intake": program.get("intake") or [],
             "apply_url": program.get("campuses", [{}])[0].get("apply_url") if program.get("campuses") else program.get("apply_url") or uni.get("website") or "",
-            "match_score": calculate_match_score(profile, program),
+            "match_score": res["match_score"],
             "notes": item.get("notes") or "",
             "created_at": item.get("created_at")
         }
@@ -160,12 +123,10 @@ async def get_shortlists(user: dict = Depends(require_student)):
 async def add_to_shortlist(data: ShortlistCreate, user: dict = Depends(require_student)):
     db = get_database()
 
-    # Verify university exists
     uni = await db.universities.find_one({"_id": ObjectId(data.university_id)})
     if not uni:
         raise HTTPException(status_code=404, detail="University not found")
 
-    # Verify program exists inside the university
     program = None
     for p in uni.get("programs", []):
         if p.get("name", "").lower() == data.program_name.lower():
@@ -194,6 +155,7 @@ async def add_to_shortlist(data: ShortlistCreate, user: dict = Depends(require_s
     doc["_id"] = result.inserted_id
     
     profile = await db.profiles.find_one({"user_id": user["id"]}) or {}
+    res = calculate_eligibility_and_score(profile, program, uni)
     
     serialized = {
         "id": str(doc["_id"]),
@@ -207,7 +169,7 @@ async def add_to_shortlist(data: ShortlistCreate, user: dict = Depends(require_s
         "deadline": format_deadline(program),
         "intake": program.get("intake") or [],
         "apply_url": program.get("campuses", [{}])[0].get("apply_url") if program.get("campuses") else program.get("apply_url") or uni.get("website") or "",
-        "match_score": calculate_match_score(profile, program),
+        "match_score": res["match_score"],
         "notes": doc["notes"],
         "created_at": doc["created_at"]
     }
@@ -250,54 +212,117 @@ async def remove_from_shortlist(shortlist_id: str, user: dict = Depends(require_
 
 @router.get("/suggestions")
 async def get_suggested_programs(user: dict = Depends(require_student)):
-    """Retrieve AI Suggested Programs based on student profile and preferences."""
+    """Retrieve Scored and Filtered Program Recommendations."""
     db = get_database()
+    
+    # 1. Check if shortlist is empty
+    shortlists_count = await db.shortlists.count_documents({"user_id": user["id"]})
+    if shortlists_count == 0:
+        return {
+            "message": "Shortlist at least one program to receive personalized recommendations.",
+            "items": [],
+            "total": 0
+        }
+
+    # 2. Check if profile exists and is completed (100%)
     profile = await db.profiles.find_one({"user_id": user["id"]})
     if not profile:
-        return {"items": [], "total": 0}
+        return {
+            "message": "Complete your profile and shortlist programs to receive recommendations.",
+            "items": [],
+            "total": 0
+        }
+        
+    from app.routers.profiles import calculate_completion
+    completion = await calculate_completion(profile, db)
+    if completion < 100:
+        return {
+            "message": "Complete your profile and shortlist programs to receive recommendations.",
+            "items": [],
+            "total": 0
+        }
+
+    # Gather shortlisted programs
+    shortlists = await db.shortlists.find({"user_id": user["id"]}).to_list(length=100)
+    shortlisted_keys = set((s["university_id"], s["program_name"].lower()) for s in shortlists)
+    shortlisted_program_names = [s["program_name"] for s in shortlists]
+
+    # Clean keywords from shortlisted programs to suggest similar ones
+    shortlist_keywords = []
+    for sname in shortlisted_program_names:
+        shortlist_keywords.extend([kw.lower() for kw in re.findall(r'\w+', sname) if len(kw) > 3])
+    shortlist_keywords = list(set(shortlist_keywords))
 
     prefs = profile.get("preferences", {})
     preferred_countries = prefs.get("preferred_countries", [])
-    preferred_degrees = prefs.get("preferred_degrees", [])
     budget_max = prefs.get("budget_max")
-    specialization = profile.get("field_of_study", "")
 
-    # Build Mongo query
-    query = {}
+    # Build Mongo query for universities
+    uni_query = {}
     if preferred_countries:
-        query["country"] = {"$in": preferred_countries}
+        uni_query["country"] = {"$in": preferred_countries}
 
-    # Fetch universities matching preferences
-    unis = await db.universities.find(query).to_list(length=100)
+    unis = await db.universities.find(uni_query).to_list(length=150)
+    
+    # Analyze degree progression
+    student_level = profile.get("academic_level", "").lower()
     
     candidates = []
     for uni in unis:
+        uni_id_str = str(uni["_id"])
         for prog in uni.get("programs", []):
-            # 1. Check degree match
-            if preferred_degrees:
-                if prog.get("degree") not in preferred_degrees:
-                    continue
+            prog_name_lower = prog["name"].lower()
             
-            # 2. Check budget match
-            campuses = prog.get("campuses", [])
+            # Exclude programs already in shortlist
+            if (uni_id_str, prog_name_lower) in shortlisted_keys:
+                continue
+
+            # Enforce Degree Progression Logic (Issue 2)
+            prog_degree = prog.get("degree", "").lower()
+            is_bach = "bachelor" in prog_degree
+            is_master = "master" in prog_degree or "mba" in prog_degree or "msc" in prog_degree or "mtech" in prog_degree
+            is_phd = "phd" in prog_degree or "doctor" in prog_degree
+
+            if student_level == "bachelors":
+                if not is_master:
+                    continue  # Only show Master's
+            elif student_level == "masters":
+                if not (is_master or is_phd):
+                    continue  # Show Master's and PhD
+            elif student_level == "12th":
+                if not is_bach:
+                    continue  # Only show Bachelor's
+            else:
+                pass  # If no academic info, let progression filters pass (handled by top logic)
+
+            # Filter budget
             if budget_max is not None:
+                campuses = prog.get("campuses", [])
                 fees = [c.get("tuition_fee") for c in campuses if c.get("tuition_fee") is not None]
-                if fees and min(fees) > budget_max:
+                tuition_fee_val = min(fees) if fees else (uni.get("tuition_min") or 0.0)
+                if tuition_fee_val > budget_max:
                     continue
+
+            # Run Scoring Engine
+            scoring_res = calculate_eligibility_and_score(profile, prog, uni)
             
-            # Compute match score
-            match_score = calculate_match_score(profile, prog)
-            
-            # Filter low matches if specialization matches
-            if specialization:
-                spec_keywords = re.findall(r'\w+', specialization.lower())
-                prog_name_lower = prog.get("name", "").lower()
-                keyword_match = any(kw in prog_name_lower for kw in spec_keywords if len(kw) > 3)
-                if keyword_match:
-                    match_score = min(match_score + 10, 99)
-            
+            # Boost score slightly if similar to shortlisted courses
+            similarity_boost = 0
+            if shortlist_keywords and any(kw in prog_name_lower for kw in shortlist_keywords):
+                similarity_boost = 5
+
+            match_score = min(scoring_res["match_score"] + similarity_boost, 99)
+            category = scoring_res["category"]
+
+            # Filter low matches (only recommend Safe or Target admission chances)
+            if match_score < 70:
+                continue
+
+            reasons_str = ", ".join(scoring_res["reasons"])
+            why_recommended = f"{match_score}% Match. Reasons: {reasons_str}."
+
             candidates.append({
-                "university_id": str(uni["_id"]),
+                "university_id": uni_id_str,
                 "university_name": uni["name"],
                 "program_name": prog["name"],
                 "degree": prog.get("degree") or "Master's",
@@ -306,20 +331,22 @@ async def get_suggested_programs(user: dict = Depends(require_student)):
                 "tuition_fee": format_tuition_fee(prog, uni),
                 "deadline": format_deadline(prog),
                 "intake": prog.get("intake") or [],
-                "apply_url": campuses[0].get("apply_url") if campuses else prog.get("apply_url") or uni.get("website") or "",
-                "match_score": match_score
+                "apply_url": prog.get("campuses", [{}])[0].get("apply_url") if prog.get("campuses") else prog.get("apply_url") or uni.get("website") or "",
+                "match_score": match_score,
+                "category": category,
+                "why_recommended": why_recommended
             })
 
-    # Sort candidates by match score descending
+    # Sort suggestions by match score descending
     candidates.sort(key=lambda x: x["match_score"], reverse=True)
-    top_candidates = candidates[:10]  # return top 10 suggestions
+    top_candidates = candidates[:10]
 
     return {"items": top_candidates, "total": len(top_candidates)}
 
 
 @router.get("/{shortlist_id}/similar")
 async def get_similar_programs(shortlist_id: str, user: dict = Depends(require_student)):
-    """Retrieve 10 similar programs in Germany database with Gemini recommendations."""
+    """Retrieve 10 similar programs in Germany database with matching scores."""
     db = get_database()
     profile = await db.profiles.find_one({"user_id": user["id"]}) or {}
     
@@ -335,23 +362,27 @@ async def get_similar_programs(shortlist_id: str, user: dict = Depends(require_s
     if not target_uni:
         raise HTTPException(status_code=404, detail="Associated university not found")
 
-    # Find candidate programs in Germany
     germany_unis = await db.universities.find({"country": "Germany"}).to_list(length=150)
     
-    # Simple keyword extraction
     keywords = [kw.lower() for kw in re.findall(r'\w+', target_program_name) if len(kw) > 3]
     if not keywords:
         keywords = ["science", "engineering", "technology"]
 
     candidates = []
     for uni in germany_unis:
+        uni_id_str = str(uni["_id"])
         for prog in uni.get("programs", []):
-            # Exclude current program/university combo
-            if str(uni["_id"]) == shortlist_item["university_id"] and prog["name"] == target_program_name:
+            if uni_id_str == shortlist_item["university_id"] and prog["name"] == target_program_name:
                 continue
                 
             prog_name_lower = prog["name"].lower()
             if any(kw in prog_name_lower for kw in keywords):
+                # Calculate real scoring
+                scoring_res = calculate_eligibility_and_score(profile, prog, uni)
+                
+                reasons_str = ", ".join(scoring_res["reasons"])
+                why_rec = f"Curriculum matches your interests in {', '.join(keywords[:2])}. {reasons_str}."
+
                 campuses = prog.get("campuses", [])
                 candidates.append({
                     "program_name": prog["name"],
@@ -362,73 +393,13 @@ async def get_similar_programs(shortlist_id: str, user: dict = Depends(require_s
                     "tuition": format_tuition_fee(prog, uni),
                     "deadline": format_deadline(prog),
                     "intake": ", ".join(prog.get("intake", ["Winter Intake"])),
-                    "apply_url": campuses[0].get("apply_url") if campuses else prog.get("apply_url") or uni.get("website") or ""
+                    "apply_url": campuses[0].get("apply_url") if campuses else prog.get("apply_url") or uni.get("website") or "",
+                    "match_score": scoring_res["match_score"],
+                    "why_recommended": why_rec
                 })
                 
-    # Sort or prune to top 15 candidates for LLM processing
-    candidates = candidates[:15]
-    
-    if not candidates:
-        # Fallback empty list if none found
-        return {"items": [], "total": 0}
-
-    # Use Gemini to rank/recommend 10 programs
-    system_instruction = (
-        "You are an expert AI Admission Recommendation Engine. Your job is to select 10 similar programs in Germany "
-        "and provide personalized reasoning (why recommended) for each of them based on the student's profile."
-    )
-    
-    prompt = f"""
-    The student shortlisted the program: "{target_program_name}" at "{target_uni.get('name')}".
-    
-    Student Profile:
-    - GPA: {profile.get('gpa', 'Not provided')}
-    - Field of study: {profile.get('field_of_study', 'Not provided')}
-    - Test Scores: {json.dumps(profile.get('test_scores', []))}
-    
-    Here is a list of similar program options in Germany:
-    {json.dumps(candidates)}
-    
-    Please choose exactly 10 programs from the candidates that are most relevant. For each selected program:
-    1. Calculate a personalized "match_score" (integer between 60 and 98) representing suitability for this student.
-    2. Write a short 1-2 sentence "why_recommended" explaining why this program is a good fit.
-    
-    Return the response as a JSON array of 10 items.
-    Example schema:
-    [
-        {{
-            "program_name": "...",
-            "university_name": "...",
-            "location": "...",
-            "degree": "...",
-            "language": "...",
-            "tuition": "...",
-            "deadline": "...",
-            "intake": "...",
-            "apply_url": "...",
-            "match_score": 85,
-            "why_recommended": "This program offers strong machine learning tracks that align with your AI coursework."
-        }}
-    ]
-    """
-
-    try:
-        raw_reply = await generate_ai(prompt, system_instruction, json_mode=True)
-        cleaned = clean_json_text(raw_reply)
-        similar_items = json.loads(cleaned)
-        # Ensure we return exactly what was generated (up to 10)
-        return {"items": similar_items[:10], "total": len(similar_items)}
-    except Exception as e:
-        logger.error(f"Failed to generate AI similar programs recommendation: {e}")
-        # Programmatic fallback
-        fallback_items = []
-        for c in candidates[:10]:
-            fallback_items.append({
-                **c,
-                "match_score": 80,
-                "why_recommended": "Based on similar course curriculum and international student support."
-            })
-        return {"items": fallback_items, "total": len(fallback_items)}
+    candidates.sort(key=lambda x: x["match_score"], reverse=True)
+    return {"items": candidates[:10], "total": len(candidates[:10])}
 
 
 @router.get("/compare")
