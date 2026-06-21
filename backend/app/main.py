@@ -5,6 +5,8 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from app.config import get_settings
 from app.database import connect_db, close_db, get_database
@@ -90,6 +92,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Ensure uploads directory exists and mount static files
+os.makedirs("uploads/profile_photos", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Register all API routers
 app.include_router(auth.router, prefix="/api/v1")

@@ -103,6 +103,8 @@ class ProfileUpdate(BaseModel):
     current_country: str | None = None
     email: str | None = None
     profile_photo: str | None = None  # Base64 data url or string
+    profile_photo_url: str | None = None
+    uploaded_at: str | None = None
     academic_level: str | None = None
     field_of_study: str | None = None
     gpa: str | None = None
@@ -132,6 +134,8 @@ class ProfileResponse(BaseModel):
     current_country: str = ""
     email: str = ""
     profile_photo: str = ""
+    profile_photo_url: str = ""
+    uploaded_at: str = ""
     academic_level: str = ""
     field_of_study: str = ""
     gpa: str = ""
