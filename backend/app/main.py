@@ -3,9 +3,11 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import os
 
 from app.config import get_settings
@@ -83,6 +85,22 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Check if the error is for the photo field in /profile/photo
+    if "/profile/photo" in str(request.url):
+        for error in exc.errors():
+            if "photo" in error.get("loc", []):
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "Profile photo is required"}
+                )
+    # Default validation error handling: return 422
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()}
+    )
 
 # CORS middleware for frontend access
 app.add_middleware(

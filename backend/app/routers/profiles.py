@@ -284,10 +284,15 @@ async def update_my_profile(data: ProfileUpdate, user: dict = Depends(require_st
 @router.post("/profile/photo")
 async def upload_profile_photo(
     request: Request,
-    photo: UploadFile = File(None),
+    photo: UploadFile = File(...),
     user: dict = Depends(require_student),
 ):
     """Upload a profile photo. Saves file to local disk and stores path, URL, and timestamp in MongoDB."""
+    print("FILES RECEIVED")
+    print(photo)
+    print("FILENAME")
+    print(photo.filename)
+
     # Debug Logging: Request headers and FormData keys
     logger.info(f"Request headers: {dict(request.headers)}")
     try:
